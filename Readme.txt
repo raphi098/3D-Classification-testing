@@ -1,1 +1,0 @@
-The Following code follows the Strategy Pattern
