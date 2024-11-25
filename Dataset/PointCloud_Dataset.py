@@ -36,9 +36,7 @@ class PointCloudDataset(Dataset):
         shape_ids = {}
         shape_ids['train'] = [line.rstrip() for line in open(os.path.join(self.root, 'train.txt'))]
         shape_ids['test'] = [line.rstrip() for line in open(os.path.join(self.root, 'test.txt'))]
-        print(shape_ids["train"])
         shape_names = ['_'.join(x.split('_')[0:-1]) for x in shape_ids[self.split]]
-        print(shape_names)
         self.datapath = [(shape_names[i], os.path.join(self.root, shape_names[i], self.split, shape_ids[self.split][i])) for i in range(len(shape_ids[self.split]))]
 
         self.save_path = os.path.join(self.root, 'custom.dat')
@@ -46,15 +44,11 @@ class PointCloudDataset(Dataset):
         if self.process_data:
             if not os.path.exists(self.save_path):
                 print("Processing data ...")
-                print(len(self.datapath))
                 self.list_of_points = [None] * len(self.datapath)
                 self.list_of_labels = [None] * len(self.datapath)
 
                 for index in tqdm(range(len(self.datapath))):
                     fn = self.datapath[index]
-                    print(f"index: {index}, fn: {fn}")
-                    print(f"datapath: {self.datapath}")
-                    print(f"classes: {self.classes}")
                     cls = self.classes[self.datapath[index][0]]
                     cls = np.array([cls]).astype(np.int32)
                     point_set = o3d.io.read_point_cloud(fn[1])

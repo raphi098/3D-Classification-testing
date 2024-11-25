@@ -9,6 +9,8 @@ from Dataset import PointCloudDataset
 import os
 from torch.utils.data import DataLoader
 from utils import WandbLogger
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 class SACNNStrategy(ClassificationStrategy):
     def __init__(self, num_classes, k=25, num_points=1024):
@@ -17,14 +19,15 @@ class SACNNStrategy(ClassificationStrategy):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.num_points = num_points
+        self.output_dir = None
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         if data_raw:
-            new_dataset_path = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}_{self.num_points}_points")
-            print(f"Creating Dataset in Path {new_dataset_path}")
+            self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}_{self.num_points}_points")
+            print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
-            dataset_train = PointCloudDataset(root_dir=new_dataset_path, process_data=True, split="train")
-            dataset_test = PointCloudDataset(root_dir=new_dataset_path, process_data=False, split="test")
+            dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
+            dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
         else:
             dataset_train = PointCloudDataset(root_dir=dataset_path, process_data=False, split="train")
             dataset_test = PointCloudDataset(root_dir=dataset_path, process_data=False, split="test")
@@ -34,13 +37,18 @@ class SACNNStrategy(ClassificationStrategy):
     def train(self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
         # Init the dataloaders
         dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
-        dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
+        dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
+        self.save_path = os.path.join("results", "SACNN_" + os.path.basename(self.output_dir))
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+            os.makedirs(os.path.join(self.save_path, "confusion_matrices"))
 
         # Dynamically initialize the WandbLogger
         self.logger = WandbLogger(
             project_name=wandb_project_name,
+            run_name=wandb_run_name,
             config={
                 "num_classes": len(dataloader_train.dataset.classes),
                 "learning_rate": lr,
@@ -88,7 +96,17 @@ class SACNNStrategy(ClassificationStrategy):
 
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
-                self.save("best_sacnn_model.pth")
+                    
+
+                self.save(os.path.join(self.save_path, "best_sacnn_model.pth"))
+
+                # Create and save confusion matrix
+                cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=dataloader_train.dataset.classes)
+                disp.plot(cmap=plt.cm.Blues)
+                plt.title(f"Confusion Matrix (Epoch {epoch + 1})")
+                plt.savefig(os.path.join(self.save_path, f"confusion_matrix_epoch_{epoch + 1}.png"))
+                plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
 
@@ -131,7 +149,7 @@ class SACNNStrategy(ClassificationStrategy):
         print(f"Validation Accuracy: {accuracy:.2f}%, Validation Loss: {avg_loss:.4f}")
 
         return accuracy, avg_loss, torch.cat(all_preds), torch.cat(all_labels)
-    
+
     def test(self, dataset_test):
         dataloader_val = DataLoader(dataset_test, batch_size=24, shuffle=False)
         self.eval(dataloader_val)

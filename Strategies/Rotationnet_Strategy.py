@@ -83,6 +83,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
         # Dynamically initialize the WandbLogger
         self.logger = WandbLogger(
             project_name=wandb_project_name,
+            run_name=wandb_run_name,
             config={
                 "num_classes": self.num_classes,
                 "num_views": self.num_views,

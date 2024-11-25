@@ -9,6 +9,8 @@ import os
 from torch.utils.data import DataLoader
 from utils import WandbLogger, Augmentation
 import numpy as np
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 class Pointnet2Strategy(ClassificationStrategy):
     def __init__(self, num_classes, num_points=1024):
@@ -33,17 +35,24 @@ class Pointnet2Strategy(ClassificationStrategy):
 
         return dataset_train, dataset_test  
 
-    def train(self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
+    def train(
+        self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None
+    ):
         # Init the dataloaders
         dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
         dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
 
         optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
+        self.save_path = os.path.join("results", f"Pointnet2_{os.path.basename(self.output_dir)}")
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+            os.makedirs(os.path.join(self.save_path, "confusion_matrices"))
 
         # Dynamically initialize the WandbLogger
         self.logger = WandbLogger(
             project_name=wandb_project_name,
+            run_name=wandb_run_name,
             config={
                 "num_classes": len(dataloader_train.dataset.classes),
                 "learning_rate": lr,
@@ -79,6 +88,7 @@ class Pointnet2Strategy(ClassificationStrategy):
 
             train_accuracy = np.mean(mean_correct) * 100
             print(f"Train Loss: {epoch_loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
+            
             # Log training metrics
             self.logger.log_metrics({
                 "train_loss": epoch_loss.item(),
@@ -96,7 +106,17 @@ class Pointnet2Strategy(ClassificationStrategy):
 
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
-                self.save("best_pointnet_model.pth")
+
+
+                self.save(os.path.join(self.save_path, "best_pointnet_model.pth"))
+
+                # Create and save confusion matrix
+                cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=dataloader_train.dataset.classes)
+                disp.plot(cmap=plt.cm.Blues)
+                plt.title(f"Confusion Matrix (Epoch {epoch + 1})")
+                plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"))
+                plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
 
