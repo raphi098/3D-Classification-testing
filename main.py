@@ -3,14 +3,36 @@ from AIWorkflow import AIWorkflow
 import os
 
 if __name__ == "__main__":
-    # Instantiate the strategy and workflow
-    strategy = Rotationnet_Strategy(num_classes=2)
+    # Define the path to the data
+    path_data = os.path.join(os.getcwd(), "Data_raw", "1gliedrig_100_files")
+
+    # Instantiate the strategy and workflow 
+    strategy = Rotationnet_Strategy(num_classes=9, feature_extractor="resnet18")
     workflow = AIWorkflow(strategy)
 
-    # Define the path to the data
-    path_data = os.path.join(os.getcwd(), "Data_raw", "test_dataset")
-
     # Prepare the data
-    dataset_train, dataset_test = workflow.prepare_data(path_data, data_raw=True, train_test_split=0.8)
+    dataset_train, dataset_test = workflow.prepare_data(path_data, data_raw=False)
+    workflow.run_training(dataset_train, dataset_test, wandb_run_name="Rotationnet_resnet18_12views")
 
-    workflow.run_training(dataset_train, dataset_test)
+    # Instantiate the strategy and workflow 
+    strategy = Rotationnet_Strategy(num_classes=9)
+    workflow = AIWorkflow(strategy)
+    dataset_train, dataset_test = workflow.prepare_data(path_data, data_raw=False)
+    workflow.run_training(dataset_train, dataset_test, wandb_run_name="Rotationnet_alexnet_12views")
+
+    # Instantiate the strategy and workflow
+    strategy = Rotationnet_Strategy(num_classes=9, feature_extractor="resnet18", num_views=20)
+    workflow = AIWorkflow(strategy)
+    dataset_train, dataset_test = workflow.prepare_data(path_data)
+    workflow.run_training(dataset_train, dataset_test, wandb_run_name="Rotationnet_resnet18_20views")
+
+    # Instantiate the strategy and workflow
+    strategy = Rotationnet_Strategy(num_classes=9, num_views=20)
+    workflow = AIWorkflow(strategy)
+    dataset_train, dataset_test = workflow.prepare_data(path_data, data_raw=False)
+    workflow.run_training(dataset_train, dataset_test, wandb_run_name="Rotationnet_alexnet_20views")
+
+
+    
+    
+    

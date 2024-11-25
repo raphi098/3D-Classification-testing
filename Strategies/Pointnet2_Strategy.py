@@ -11,19 +11,20 @@ from utils import WandbLogger, Augmentation
 import numpy as np
 
 class Pointnet2Strategy(ClassificationStrategy):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, num_points=1024):
         self.model = Pointnet2(num_classes=num_classes)
         self.criterion = Pointnet2_loss()
         self.optimizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.Augmentation = Augmentation()
+        self.num_points = num_points
 
-    def prepare_data(self, dataset_path, number_of_points, data_raw=True, train_test_split=0.8):
+    def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         if data_raw:
-            new_dataset_path = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{number_of_points}_points")
+            new_dataset_path = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {new_dataset_path}")
-            StlToPointCloud(dataset_path=dataset_path, number_of_points=number_of_points, train_test_split=train_test_split)
+            StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
             dataset_train = PointCloudDataset(root_dir=new_dataset_path, process_data=True, split="train")
             dataset_test = PointCloudDataset(root_dir=new_dataset_path, process_data=False, split="test")
         else:

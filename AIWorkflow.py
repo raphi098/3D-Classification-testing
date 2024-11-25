@@ -8,7 +8,7 @@ class AIWorkflow:
         """
         self.strategy = strategy
 
-    def prepare_data(self, dataset_path, number_of_points = None, data_raw=True, train_test_split=0.8):
+    def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         """
         Prepare the dataset using the selected strategy.
 
@@ -22,21 +22,29 @@ class AIWorkflow:
             Tuple[DataLoader, DataLoader]: Dataloaders for training and testing.
         """
         print(f"Preparing data using strategy {self.strategy.__class__.__name__}")
-        if number_of_points is None:
-            return self.strategy.prepare_data(dataset_path, data_raw, train_test_split)
-        else:
-            return self.strategy.prepare_data(dataset_path, number_of_points, data_raw, train_test_split)
 
-    def run_training(self, dataloader_train, dataloader_val, epochs=10, lr=0.001):
+        return self.strategy.prepare_data(dataset_path, data_raw, train_test_split)
+
+    def run_training(self, dataset_train, dataset_val, epochs=100, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
         """
         Run the training process using the selected strategy.
 
         Args:
-            dataloader_train (DataLoader): Training dataset loader.
-            dataloader_val (DataLoader): Validation dataset loader.
-            epochs (int): Number of training epochs.
+            dataset_train (Dataset): Training dataset.
+            dataset_val (Dataset): Validation dataset.
+            epochs (int, optional): Number of training epochs. Defaults to 10.
+            lr (float, optional): Learning rate for the optimizer. Defaults to 0.001.
+            batch_size (int, optional): Batch size for training and validation. Defaults to 24.
+            num_workers (int, optional): Number of workers for data loading. Defaults to 8.
+            persistent_workers (bool, optional): Whether to keep data loading workers alive between epochs. Defaults to True.
+            wandb_project_name (str, optional): Project name for logging metrics to Weights and Biases. Defaults to "3d_classification".
+            wandb_run_name (str, optional): Run name for logging to Weights and Biases. Defaults to None.
+
+        Returns:
+            None
         """
-        self.strategy.train(dataloader_train, dataloader_val, epochs, lr)
+        self.strategy.train(dataset_train, dataset_val, epochs, lr, batch_size, num_workers, persistent_workers, wandb_project_name, wandb_run_name)
+
 
     def test_model(self, dataloader_test):
         """
