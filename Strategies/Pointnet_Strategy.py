@@ -24,6 +24,7 @@ class PointnetStrategy(ClassificationStrategy):
         self.num_points = num_points
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
+        
         if data_raw:
             self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {self.output_dir}")
@@ -31,6 +32,7 @@ class PointnetStrategy(ClassificationStrategy):
             dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
             dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
         else:
+            self.output_dir = dataset_path
             dataset_train = PointCloudDataset(root_dir=dataset_path, process_data=False, split="train")
             dataset_test = PointCloudDataset(root_dir=dataset_path, process_data=False, split="test")
 
@@ -67,10 +69,9 @@ class PointnetStrategy(ClassificationStrategy):
             print(f"Epoch {epoch+1}/{epochs}:")
             mean_correct = []
             self.model.train()
-            scheduler.step()
+            
             for batch_id, (batch_data, batch_labels) in tqdm(enumerate(dataloader_train), total=len(dataloader_train)):
                 optimizer.zero_grad()
-
                 batch_data = batch_data.data.numpy()
                 batch_data = self.Augmentation.random_point_dropout(batch_data)
                 batch_data[:, :, 0:3] = self.Augmentation.random_scale_point_cloud(batch_data[:, :, 0:3])
@@ -86,6 +87,7 @@ class PointnetStrategy(ClassificationStrategy):
                 mean_correct.append(correct.item() / float(batch_data.size()[0]))
                 epoch_loss.backward()
                 optimizer.step()
+                scheduler.step()
 
             train_accuracy = np.mean(mean_correct) * 100
             print(f"Train Loss: {epoch_loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
@@ -114,9 +116,23 @@ class PointnetStrategy(ClassificationStrategy):
                 # Create and save confusion matrix
                 cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
                 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=dataloader_train.dataset.classes)
-                disp.plot(cmap=plt.cm.Blues)
+
+                # Adjust figure size based on the number of classes
+                num_classes = len(dataloader_train.dataset.classes)
+                fig_size = max(8, num_classes // 2)  # Dynamically scale figure size, min size of 8
+                plt.figure(figsize=(fig_size, fig_size))
+
+                # Plot confusion matrix
+                ax = plt.gca()
+                disp.plot(cmap=plt.cm.Blues, ax=ax)
+
+                # Rotate x-axis labels for better readability
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+
+                # Set title and save the confusion matrix plot
                 plt.title(f"Confusion Matrix (Epoch {epoch + 1})")
-                plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"))
+                plt.tight_layout()  # Ensures everything fits within the figure
+                plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")

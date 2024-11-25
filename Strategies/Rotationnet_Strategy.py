@@ -47,10 +47,13 @@ class Rotationnet_Strategy(ClassificationStrategy):
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         """Prepare data by creating multiview datasets."""
+        
         if data_raw:
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_views}_views")
             MultiviewDataset(dataset_path, num_views=self.num_views, train_test_split=train_test_split)
+        else:
+            self.output_dir = dataset_path
 
-        self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_views}_views")
         train_dataset = datasets.ImageFolder(
             root=os.path.join(self.output_dir, "train"),
             transform=transforms.Compose(
@@ -67,8 +70,8 @@ class Rotationnet_Strategy(ClassificationStrategy):
         return train_dataset, test_dataset
 
     def train(self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
-        train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
-        val_loader = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
+        dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
+        dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
 
         self.save_path = os.path.join("results", f"{self.feature_extractor}_{os.path.basename(self.output_dir)}")
         optimizer = torch.optim.SGD(
@@ -101,7 +104,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
             correct = 0
             total = 0
 
-            for i, (batch_data, batch_labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}")):
+            for i, (batch_data, batch_labels) in enumerate(tqdm(dataloader_train, desc=f"Epoch {epoch + 1}/{epochs}")):
                 batch_data, batch_labels = batch_data.to(self.device), batch_labels.to(self.device)
 
                 optimizer.zero_grad()
@@ -116,7 +119,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
                 total += batch_labels.size(0)
 
             train_accuracy = 100 * correct / total
-            avg_loss = running_loss / len(train_loader)
+            avg_loss = running_loss / len(dataloader_train)
 
             # Log training metrics
             self.logger.log_metrics({
@@ -126,7 +129,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
             })
 
             # Validate and log validation metrics
-            val_accuracy, all_preds, all_labels = self.eval(val_loader)
+            val_accuracy, all_preds, all_labels = self.eval(dataloader_val)
             self.logger.log_metrics({
                 "val_accuracy": val_accuracy,
                 "epoch": epoch + 1,
@@ -139,11 +142,25 @@ class Rotationnet_Strategy(ClassificationStrategy):
                 self.save(os.path.join(self.save_path, f"best_rotationnet_model_epoch_{epoch + 1}.pth"))
 
                 # Create and save confusion matrix
-                cm = confusion_matrix(all_labels, all_preds, labels=range(self.num_classes))
-                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=range(self.num_classes))
-                disp.plot(cmap=plt.cm.Blues)
+                cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=dataloader_train.dataset.classes)
+
+                # Adjust figure size based on the number of classes
+                num_classes = len(dataloader_train.dataset.classes)
+                fig_size = max(8, num_classes // 2)  # Dynamically scale figure size, min size of 8
+                plt.figure(figsize=(fig_size, fig_size))
+
+                # Plot confusion matrix
+                ax = plt.gca()
+                disp.plot(cmap=plt.cm.Blues, ax=ax)
+
+                # Rotate x-axis labels for better readability
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+
+                # Set title and save the confusion matrix plot
                 plt.title(f"Confusion Matrix (Epoch {epoch + 1})")
-                plt.savefig(os.path.join(self.save_path, f"confusion_matrix.png"))
+                plt.tight_layout()  # Ensures everything fits within the figure
+                plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
             scheduler.step()

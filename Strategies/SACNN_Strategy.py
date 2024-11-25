@@ -22,13 +22,15 @@ class SACNNStrategy(ClassificationStrategy):
         self.output_dir = None
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
+        
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}_{self.num_points}_points")
+            self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}")
             print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
             dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
             dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
         else:
+            self.output_dir = dataset_path
             dataset_train = PointCloudDataset(root_dir=dataset_path, process_data=False, split="train")
             dataset_test = PointCloudDataset(root_dir=dataset_path, process_data=False, split="test")
 
@@ -97,15 +99,28 @@ class SACNNStrategy(ClassificationStrategy):
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
                     
-
                 self.save(os.path.join(self.save_path, "best_sacnn_model.pth"))
 
                 # Create and save confusion matrix
                 cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
                 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=dataloader_train.dataset.classes)
-                disp.plot(cmap=plt.cm.Blues)
+
+                # Adjust figure size based on the number of classes
+                num_classes = len(dataloader_train.dataset.classes)
+                fig_size = max(8, num_classes // 2)  # Dynamically scale figure size, min size of 8
+                plt.figure(figsize=(fig_size, fig_size))
+
+                # Plot confusion matrix
+                ax = plt.gca()
+                disp.plot(cmap=plt.cm.Blues, ax=ax)
+
+                # Rotate x-axis labels for better readability
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+
+                # Set title and save the confusion matrix plot
                 plt.title(f"Confusion Matrix (Epoch {epoch + 1})")
-                plt.savefig(os.path.join(self.save_path, f"confusion_matrix_epoch_{epoch + 1}.png"))
+                plt.tight_layout()  # Ensures everything fits within the figure
+                plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
