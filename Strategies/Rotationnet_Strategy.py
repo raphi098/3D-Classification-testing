@@ -14,6 +14,7 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from utils import WandbLogger
+import wandb
 
 
 class Rotationnet_Strategy(ClassificationStrategy):
@@ -166,6 +167,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
             scheduler.step()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
+        wandb.finish()
 
     def eval(self, dataloader_val):
         """Evaluate the model on the validation set."""

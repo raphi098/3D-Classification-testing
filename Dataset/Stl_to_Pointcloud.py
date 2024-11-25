@@ -60,6 +60,11 @@ class StlToPointCloud:
     
     def convert_to_pc(self, file_path, destination_path):
         mesh = o3d.io.read_triangle_mesh(file_path)
+        # Center the mesh
+        vertices = np.asarray(mesh.vertices)
+        centroid = vertices.mean(axis=0)
+        vertices_centered = vertices - centroid
+        mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
         pc = mesh.sample_points_poisson_disk(number_of_points=self.number_of_points)
         o3d.io.write_point_cloud(destination_path, pc)
 

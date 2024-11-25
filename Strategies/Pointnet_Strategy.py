@@ -11,6 +11,7 @@ from utils import WandbLogger, Augmentation
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+import wandb
 
 class PointnetStrategy(ClassificationStrategy):
     def __init__(self, num_classes, num_points=1024):
@@ -136,6 +137,7 @@ class PointnetStrategy(ClassificationStrategy):
                 plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
+        wandb.finish()
 
     def eval(self, dataloader_val):
         self.model.eval()

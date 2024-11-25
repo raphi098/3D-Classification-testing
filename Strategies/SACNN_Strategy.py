@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from utils import WandbLogger
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+import wandb
 
 class SACNNStrategy(ClassificationStrategy):
     def __init__(self, num_classes, k=25, num_points=1024):
@@ -24,7 +25,7 @@ class SACNNStrategy(ClassificationStrategy):
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}")
+            self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
             dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
@@ -124,6 +125,7 @@ class SACNNStrategy(ClassificationStrategy):
                 plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
+        wandb.finish()
 
     def eval(self, dataloader_val):
         self.model.eval()

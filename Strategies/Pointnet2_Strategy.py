@@ -11,6 +11,9 @@ from utils import WandbLogger, Augmentation
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+import wandb
+
+from Dataset.Custom_Data_Loader import CustomDataLoader
 
 class Pointnet2Strategy(ClassificationStrategy):
     def __init__(self, num_classes, num_points=1024):
@@ -26,15 +29,17 @@ class Pointnet2Strategy(ClassificationStrategy):
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}")
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
             dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
             dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
         else:
+            from types import SimpleNamespace
+            args = SimpleNamespace(num_point=1024, use_uniform_sample=False, use_normals=False, num_category=9)
             self.output_dir = dataset_path
-            dataset_train = PointCloudDataset(root_dir=dataset_path, process_data=False, split="train")
-            dataset_test = PointCloudDataset(root_dir=dataset_path, process_data=False, split="test")
+            dataset_train = CustomDataLoader(root=dataset_path,args=args, process_data=False, split="train")
+            dataset_test = CustomDataLoader(root=dataset_path,args=args, process_data=False, split="test")
 
         return dataset_train, dataset_test  
 
@@ -44,8 +49,9 @@ class Pointnet2Strategy(ClassificationStrategy):
         # Init the dataloaders
         dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
         dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
-
-        optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
+        
+        self.model.apply(inplace_relu)
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
         self.save_path = os.path.join("results", f"Pointnet2_{os.path.basename(self.output_dir)}")
         if not os.path.exists(self.save_path):
@@ -81,13 +87,15 @@ class Pointnet2Strategy(ClassificationStrategy):
                 batch_labels = batch_labels.to(self.device).long()
 
                 pred, trans_feat = self.model(batch_data)
+
                 epoch_loss = self.criterion(pred, batch_labels, trans_feat)
                 pred_choice = pred.data.max(1)[1]
+
                 correct = pred_choice.eq(batch_labels.long().data).cpu().sum()
                 mean_correct.append(correct.item() / float(batch_data.size()[0]))
                 epoch_loss.backward()
-                optimizer.step()
-                scheduler.step()
+            optimizer.step()
+            scheduler.step()
             train_accuracy = np.mean(mean_correct) * 100
             print(f"Train Loss: {epoch_loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
             
@@ -134,6 +142,7 @@ class Pointnet2Strategy(ClassificationStrategy):
                 plt.close()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
+        wandb.finish()
 
     def eval(self, dataloader_val):
         self.model.eval()
@@ -181,3 +190,8 @@ class Pointnet2Strategy(ClassificationStrategy):
     def load(self, path):
         self.model.load_state_dict(torch.load(path, weights_only=False))
         print(f"Model loaded from {path}")
+
+def inplace_relu(m):
+    classname = m.__class__.__name__
+    if classname.find('ReLU') != -1:
+        m.inplace=True
