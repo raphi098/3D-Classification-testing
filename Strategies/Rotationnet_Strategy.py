@@ -140,6 +140,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
                 best_accuracy = val_accuracy
                 if not os.path.exists(self.save_path):
                     os.makedirs(self.save_path)
+                    os.makedirs(os.path.join(self.save_path, "confusion_matrices"))
                 self.save(os.path.join(self.save_path, f"best_rotationnet_model_epoch_{epoch + 1}.pth"))
 
                 # Create and save confusion matrix
