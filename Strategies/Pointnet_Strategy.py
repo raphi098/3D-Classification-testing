@@ -12,12 +12,13 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import wandb
+from types import SimpleNamespace
+from Dataset import PointnetDataset
 
 class PointnetStrategy(ClassificationStrategy):
     def __init__(self, num_classes, num_points=1024):
         self.model = Pointnet(num_classes=num_classes)
         self.criterion = Pointnet_loss()
-        self.optimizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.Augmentation = Augmentation()
@@ -72,7 +73,6 @@ class PointnetStrategy(ClassificationStrategy):
             self.model.train()
             
             for batch_id, (batch_data, batch_labels) in tqdm(enumerate(dataloader_train), total=len(dataloader_train)):
-                optimizer.zero_grad()
                 batch_data = batch_data.data.numpy()
                 batch_data = self.Augmentation.random_point_dropout(batch_data)
                 batch_data[:, :, 0:3] = self.Augmentation.random_scale_point_cloud(batch_data[:, :, 0:3])
@@ -82,20 +82,23 @@ class PointnetStrategy(ClassificationStrategy):
                 batch_labels = batch_labels.to(self.device).long()
 
                 pred, trans_feat = self.model(batch_data)
-                epoch_loss = self.criterion(pred, batch_labels, trans_feat)
+                loss = self.criterion(pred, batch_labels, trans_feat)
                 pred_choice = pred.data.max(1)[1]
                 correct = pred_choice.eq(batch_labels.long().data).cpu().sum()
                 mean_correct.append(correct.item() / float(batch_data.size()[0]))
-                epoch_loss.backward()
+
+                loss.backward()
                 optimizer.step()
-                scheduler.step()
+                optimizer.zero_grad()
+                
+            scheduler.step()
 
             train_accuracy = np.mean(mean_correct) * 100
-            print(f"Train Loss: {epoch_loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
+            print(f"Train Loss: {loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
             
             # Log training metrics
             self.logger.log_metrics({
-                "train_loss": epoch_loss.item(),
+                "train_loss": loss.item(),
                 "train_accuracy": train_accuracy,
                 "epoch": epoch + 1,
             })
@@ -155,7 +158,7 @@ class PointnetStrategy(ClassificationStrategy):
 
                 # Forward pass
                 pred, _ = self.model(batch_data)
-                loss = F.cross_entropy(pred, batch_labels)
+                loss = self.criterion(pred, batch_labels)
                 total_loss += loss.item()
 
                 # Get predictions

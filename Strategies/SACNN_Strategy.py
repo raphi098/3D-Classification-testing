@@ -16,7 +16,7 @@ import wandb
 class SACNNStrategy(ClassificationStrategy):
     def __init__(self, num_classes, k=25, num_points=1024):
         self.model = SACNN(num_classes=num_classes, k=k)
-        self.optimizer = None
+        self.criterion = torch.nn.CrossEntropyLoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.num_points = num_points
@@ -42,7 +42,10 @@ class SACNNStrategy(ClassificationStrategy):
         dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
         dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
+        
+
         self.save_path = os.path.join("results", "SACNN_" + os.path.basename(self.output_dir))
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
@@ -66,25 +69,24 @@ class SACNNStrategy(ClassificationStrategy):
             print(f"Epoch {epoch+1}/{epochs}:")
             correct = 0
             total = 0
-            epoch_loss = 0.0
             for batch_id, (batch_data, batch_labels) in tqdm(enumerate(dataloader_train), total=len(dataloader_train)):
-                self.optimizer.zero_grad()
 
                 batch_data, batch_labels = batch_data.to(self.device), batch_labels.to(self.device).long()
                 outputs = self.model(batch_data)
-                loss = F.cross_entropy(outputs, batch_labels)
-                loss.backward()
-                self.optimizer.step()
-                epoch_loss += loss.item()
+                loss = self.criterion(outputs, batch_labels)
                 _, predicted = torch.max(outputs.data, 1)
                 total += batch_labels.size(0)
                 correct += (predicted == batch_labels).sum().item()
 
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                
             train_accuracy = 100 * correct / total
             print(f"Train Loss: {loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
             # Log training metrics
             self.logger.log_metrics({
-                "train_loss": epoch_loss / len(dataloader_train),
+                "train_loss": loss / len(dataloader_train),
                 "train_accuracy": train_accuracy,
                 "epoch": epoch + 1,
             })
@@ -124,6 +126,8 @@ class SACNNStrategy(ClassificationStrategy):
                 plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
+            scheduler.step()
+
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
         wandb.finish()
 
@@ -135,9 +139,6 @@ class SACNNStrategy(ClassificationStrategy):
         all_preds = []
         all_labels = []
 
-        # Define the loss criterion (e.g., CrossEntropyLoss)
-        criterion = F.cross_entropy
-
         with torch.no_grad():
             for batch_data, batch_labels in tqdm(dataloader_val):
                 # Move data and labels to the appropriate device
@@ -147,7 +148,7 @@ class SACNNStrategy(ClassificationStrategy):
                 outputs = self.model(batch_data)
 
                 # Calculate loss for the batch
-                loss = criterion(outputs, batch_labels)
+                loss = self.criterion(outputs, batch_labels)
                 total_loss += loss.item()
 
                 # Get predictions

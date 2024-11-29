@@ -12,34 +12,31 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import wandb
-
-from Dataset.Custom_Data_Loader import CustomDataLoader
+from types import SimpleNamespace
+from Dataset import PointnetDataset
 
 class Pointnet2Strategy(ClassificationStrategy):
     def __init__(self, num_classes, num_points=1024):
         self.model = Pointnet2(num_classes=num_classes)
         self.criterion = Pointnet2_loss()
-        self.optimizer = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        self.Augmentation = Augmentation()
         self.num_points = num_points
         self.output_dir = None
+        self.Augmentation = Augmentation()
+        self.num_classes = num_classes
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
-        
+        args = SimpleNamespace(num_point=1024, use_uniform_sample=False, use_normals=False, num_category=9)
         if data_raw:
             self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
-            dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
-            dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
+            dataset_train = PointnetDataset(root=self.output_dir, args=args, process_data=False, split="train")
+            dataset_test = PointnetDataset(root=self.output_dir, args=args, process_data=False, split="test")
         else:
-            from types import SimpleNamespace
-            args = SimpleNamespace(num_point=1024, use_uniform_sample=False, use_normals=False, num_category=9)
             self.output_dir = dataset_path
-            dataset_train = CustomDataLoader(root=dataset_path,args=args, process_data=False, split="train")
-            dataset_test = CustomDataLoader(root=dataset_path,args=args, process_data=False, split="test")
+            dataset_train = PointnetDataset(root=dataset_path, args=args, process_data=False, split="train")
+            dataset_test = PointnetDataset(root=dataset_path, args=args, process_data=False, split="test")
 
         return dataset_train, dataset_test  
 
@@ -47,12 +44,15 @@ class Pointnet2Strategy(ClassificationStrategy):
         self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None
     ):
         # Init the dataloaders
-        dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
+        dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers,drop_last=True, persistent_workers=persistent_workers)
         dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
         
         self.model.apply(inplace_relu)
+        self.model.to(self.device)
+
         optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
+
         self.save_path = os.path.join("results", f"Pointnet2_{os.path.basename(self.output_dir)}")
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
@@ -75,38 +75,39 @@ class Pointnet2Strategy(ClassificationStrategy):
             print(f"Epoch {epoch+1}/{epochs}:")
             mean_correct = []
             self.model.train()
-            for batch_id, (batch_data, batch_labels) in tqdm(enumerate(dataloader_train), total=len(dataloader_train)):
-                optimizer.zero_grad()
+            
+            for batch_id, (points, target) in tqdm(enumerate(dataloader_train), total=len(dataloader_train), smoothing=0.9):
+                #Not good practice to use inplace operations in pytorch, but it is used in the original implementation
+                points = points.data.numpy()
+                points = self.Augmentation.random_point_dropout(points)
+                points[:, :, 0:3] = self.Augmentation.random_scale_point_cloud(points[:, :, 0:3])
+                points[:, :, 0:3] = self.Augmentation.shift_point_cloud(points[:, :, 0:3])
+                points = torch.Tensor(points)
+                points = points.transpose(2, 1)
+                points, target = points.cuda(), target.cuda()
 
-                batch_data = batch_data.data.numpy()
-                batch_data = self.Augmentation.random_point_dropout(batch_data)
-                batch_data[:, :, 0:3] = self.Augmentation.random_scale_point_cloud(batch_data[:, :, 0:3])
-                batch_data[:, :, 0:3] = self.Augmentation.shift_point_cloud(batch_data[:, :, 0:3])
-                batch_data = torch.Tensor(batch_data).transpose(2, 1).to(self.device)
-
-                batch_labels = batch_labels.to(self.device).long()
-
-                pred, trans_feat = self.model(batch_data)
-
-                epoch_loss = self.criterion(pred, batch_labels, trans_feat)
+                pred, trans_feat = self.model(points)
+                loss = self.criterion(pred, target.long())
                 pred_choice = pred.data.max(1)[1]
 
-                correct = pred_choice.eq(batch_labels.long().data).cpu().sum()
-                mean_correct.append(correct.item() / float(batch_data.size()[0]))
-                epoch_loss.backward()
-            optimizer.step()
+                correct = pred_choice.eq(target.long().data).cpu().sum()
+                mean_correct.append(correct.item() / float(points.size()[0]))
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
             scheduler.step()
-            train_accuracy = np.mean(mean_correct) * 100
-            print(f"Train Loss: {epoch_loss.item():.4f}, Accuracy: {train_accuracy:.2f}%")
+
+            train_instance_acc = np.mean(mean_correct) * 100
+            print(f"Train Loss: {loss.item():.4f}, Accuracy: {train_instance_acc:.2f}%")
             
             # Log training metrics
             self.logger.log_metrics({
-                "train_loss": epoch_loss.item(),
-                "train_accuracy": train_accuracy,
+                "train_loss": loss.item(),
+                "train_accuracy": train_instance_acc,
                 "epoch": epoch + 1,
             })
 
-            # Validate and log validation metrics
+            # # Validate and log validation metrics
             val_accuracy, val_loss, all_preds, all_labels = self.eval(dataloader_val)
             self.logger.log_metrics({
                 "val_loss": val_loss,
@@ -117,7 +118,7 @@ class Pointnet2Strategy(ClassificationStrategy):
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
 
-                self.save(os.path.join(self.save_path, "best_pointnet_model.pth"))
+                self.save(os.path.join(self.save_path, "best_pointnet2_model.pth"))
 
                 # Create and save confusion matrix
                 cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
@@ -141,6 +142,7 @@ class Pointnet2Strategy(ClassificationStrategy):
                 plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
+
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
         wandb.finish()
 
@@ -160,7 +162,7 @@ class Pointnet2Strategy(ClassificationStrategy):
 
                 # Forward pass
                 pred, _ = self.model(batch_data)
-                loss = F.cross_entropy(pred, batch_labels)
+                loss = self.criterion(pred, batch_labels)
                 total_loss += loss.item()
 
                 # Get predictions
@@ -195,3 +197,4 @@ def inplace_relu(m):
     classname = m.__class__.__name__
     if classname.find('ReLU') != -1:
         m.inplace=True
+

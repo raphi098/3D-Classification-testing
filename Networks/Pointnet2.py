@@ -45,7 +45,7 @@ class Pointnet2_loss(nn.Module):
     def __init__(self):
         super(Pointnet2_loss, self).__init__()
 
-    def forward(self, pred, target, trans_feat):
+    def forward(self, pred, target):
         total_loss = F.nll_loss(pred, target)
 
         return total_loss

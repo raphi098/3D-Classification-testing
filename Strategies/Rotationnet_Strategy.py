@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from utils import WandbLogger
+from utils import WandbLogger, MultiViewSampler
 import wandb
 
 
@@ -23,6 +23,7 @@ class Rotationnet_Strategy(ClassificationStrategy):
         self.num_views = num_views
         self.num_classes = num_classes
         self.output_dir = None
+        self.criterion = nn.CrossEntropyLoss()
 
         # Use appropriate weights based on the architecture
         if feature_extractor == "alexnet":
@@ -44,7 +45,6 @@ class Rotationnet_Strategy(ClassificationStrategy):
             original_model=model, arch=feature_extractor, num_classes=(num_classes + 1) * num_views
         )
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         """Prepare data by creating multiview datasets."""
@@ -55,35 +55,58 @@ class Rotationnet_Strategy(ClassificationStrategy):
         else:
             self.output_dir = dataset_path
 
+        # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                              std=[0.229, 0.224, 0.225])
+        normalize = transforms.Normalize(mean=[0.485], std=[0.229])
+
         train_dataset = datasets.ImageFolder(
             root=os.path.join(self.output_dir, "train"),
             transform=transforms.Compose(
-                [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor()]
+                [ transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
             ),
         )
         test_dataset = datasets.ImageFolder(
             root=os.path.join(self.output_dir, "val"),
             transform=transforms.Compose(
-                [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor()]
+                [ transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
             ),
         )
 
         return train_dataset, test_dataset
 
-    def train(self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
-        dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers, persistent_workers=persistent_workers)
-        dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)
+    def train(
+        self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None
+    ):
+        train_sampler = MultiViewSampler(dataset_size=len(dataset_train), nview=self.num_views)
 
-        self.save_path = os.path.join("results", f"{self.feature_extractor}_{os.path.basename(self.output_dir)}")
-        optimizer = torch.optim.SGD(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=lr,
-            momentum=0.9,
-            weight_decay=1e-4,
+        dataloader_train = torch.utils.data.DataLoader(
+        dataset_train,
+        batch_size=batch_size,
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=persistent_workers,
         )
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
-        criterion = nn.CrossEntropyLoss().to(self.device)
+        dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=batch_size, num_workers=num_workers, persistent_workers=persistent_workers)
 
+        self.save_path = os.path.join("results", f"Pointnet2_{os.path.basename(self.output_dir)}")
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
+            os.makedirs(os.path.join(self.save_path, "confusion_matrices"))
+
+        self.model.to(self.device)
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, self.model.parameters()),  # Only finetunable params
+        lr=lr,  # Learning rate might be needed to use 0.001
+        betas=(0.9, 0.999),  # Default Adam hyperparameters
+        weight_decay=1e-4  # L2 regularization (same as weight decay in SGD)
+         )
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
+
+        dataloader_val.dataset.imgs = sorted(dataloader_val.dataset.imgs)
+        
         # Dynamically initialize the WandbLogger
         self.logger = WandbLogger(
             project_name=wandb_project_name,
@@ -101,47 +124,76 @@ class Rotationnet_Strategy(ClassificationStrategy):
         best_accuracy = 0
         for epoch in range(epochs):
             self.model.train()
-            running_loss = 0.0
-            correct = 0
-            total = 0
+            total_correct = 0
+            total_samples = 0
+            total_loss = 0.0
 
-            for i, (batch_data, batch_labels) in enumerate(tqdm(dataloader_train, desc=f"Epoch {epoch + 1}/{epochs}")):
-                batch_data, batch_labels = batch_data.to(self.device), batch_labels.to(self.device)
+            with tqdm(dataloader_train, desc=f"Epoch {epoch + 1}", unit="batch") as pbar:
+                for i, (input, target) in enumerate(pbar):
+                    nsamp = int(input.size(0) / self.num_views)
 
-                optimizer.zero_grad()
-                outputs = self.model(batch_data)
-                loss = criterion(outputs, batch_labels)
-                loss.backward()
-                optimizer.step()
+                    # Move inputs and targets to GPU
+                    input_var = input.cuda()
+                    target_ = torch.LongTensor(target.size(0) * self.num_views).cuda()
 
-                running_loss += loss.item()
-                _, preds = torch.max(outputs, 1)
-                correct += (preds == batch_labels).sum().item()
-                total += batch_labels.size(0)
+                    # Forward pass
+                    output = self.model(input_var)
+                    num_classes = int(output.size(1) / self.num_views) - 1
+                    output = output.view(-1, num_classes + 1)
 
-            train_accuracy = 100 * correct / total
-            avg_loss = running_loss / len(dataloader_train)
+                    # Log softmax and adjust scores for "incorrect view" label
+                    output_ = torch.nn.functional.log_softmax(output, dim=1)
+                    output_ = output_[:, :-1] - torch.t(output_[:, -1].repeat(1, output_.size(1) - 1).view(output_.size(1) - 1, -1))
+
+                    # Reshape output and compute scores
+                    output_ = output_.view(-1, self.num_views * self.num_views, num_classes)
+                    output_ = output_.detach().cpu().numpy()  # Detach the tensor before calling numpy()
+                    output_ = output_.transpose(1, 2, 0)
+                    # initialize target labels with "incorrect view label"
+                    for j in range(target_.size(0)):
+                        target_[ j ] = num_classes
+
+                    scores = np.zeros((self.vcand.shape[0], num_classes, nsamp))
+
+                    for j in range(self.vcand.shape[0]):
+                        for k in range(self.vcand.shape[1]):
+                            scores[ j ] = scores[ j ] + output_[ self.vcand[ j ][ k ] * self.num_views + k ]
+
+                    # Adjust targets based on best pose
+                    for n in range(nsamp):
+                        j_max = np.argmax(scores[:, target[n * self.num_views], n])
+                        for k in range(self.vcand.shape[1]):
+                            target_[n * self.num_views * self.num_views + self.vcand[j_max][k] * self.num_views + k] = target[n * self.num_views]
+                    
+                    target_var = target_.cuda()
+                    loss = criterion(output, target_var)
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                    # Update tqdm progress bar
+                    pbar.set_postfix({
+                        "loss": total_loss / (i + 1),
+                    })
+                scheduler.step()
+
 
             # Log training metrics
             self.logger.log_metrics({
-                "train_loss": avg_loss,
-                "train_accuracy": train_accuracy,
+                "train_loss": loss.item(),
                 "epoch": epoch + 1,
             })
 
-            # Validate and log validation metrics
-            val_accuracy, all_preds, all_labels = self.eval(dataloader_val)
+            val_accuracy, val_loss, all_preds, all_labels = self.eval(dataloader_val)
             self.logger.log_metrics({
+                "val_loss": val_loss,
                 "val_accuracy": val_accuracy,
                 "epoch": epoch + 1,
             })
-
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
-                if not os.path.exists(self.save_path):
-                    os.makedirs(self.save_path)
-                    os.makedirs(os.path.join(self.save_path, "confusion_matrices"))
-                self.save(os.path.join(self.save_path, f"best_rotationnet_model_epoch_{epoch + 1}.pth"))
+
+                self.save(os.path.join(self.save_path, "best_pointnet2_model.pth"))
 
                 # Create and save confusion matrix
                 cm = confusion_matrix(all_labels, all_preds, labels=range(len(dataloader_train.dataset.classes)))
@@ -165,36 +217,61 @@ class Rotationnet_Strategy(ClassificationStrategy):
                 plt.savefig(os.path.join(self.save_path, "confusion_matrices", f"confusion_matrix_epoch_{epoch + 1}.png"), bbox_inches="tight")
                 plt.close()
 
-            scheduler.step()
 
         print(f"Best Validation Accuracy: {best_accuracy:.2f}%")
         wandb.finish()
+        
 
     def eval(self, dataloader_val):
-        """Evaluate the model on the validation set."""
         self.model.eval()
-        correct = 0
-        total = 0
         all_preds = []
         all_labels = []
+        total_correct = 0
+        total_samples = 0
+        total_loss = 0.0
 
         with torch.no_grad():
-            for batch_data, batch_labels in tqdm(dataloader_val, desc="Evaluating"):
-                batch_data, batch_labels = batch_data.to(self.device), batch_labels.to(self.device)
-                outputs = self.model(batch_data)
-                _, preds = torch.max(outputs, 1)
+            for i, (input, target) in enumerate(dataloader_val):
+                # Move data to GPU
+                target = target.cuda()
+                input_var = input.cuda()
 
-                correct += (preds == batch_labels).sum().item()
-                total += batch_labels.size(0)
+                # Forward pass
+                output = self.model(input_var)
+                num_classes = int(output.size(1) / self.num_views) - 1
+                output = output.view(-1, self.num_views, num_classes + 1)  # Reshape for multi-view structure
 
-                all_preds.append(preds.cpu())
-                all_labels.append(batch_labels.cpu())
+                # Apply log-softmax and exclude "incorrect view" label
+                output = torch.nn.functional.log_softmax(output, dim=2)
+                class_logits = output[:, :, :-1]  # Exclude "incorrect view" column
 
-        accuracy = 100 * correct / total
-        all_preds = torch.cat(all_preds).numpy()
-        all_labels = torch.cat(all_labels).numpy()
+                # Aggregate scores across views
+                class_scores = class_logits.sum(dim=1)  # Shape: (batch_size, num_classes)
+                preds = torch.argmax(class_scores, dim=1)  # Predicted classes, shape: (batch_size,)
+
+                # Compute loss (object-level)
+                target_var = target[:len(preds)]  # Match target size with preds
+                loss = self.criterion(class_scores, target_var)
+                total_loss += loss.item()
+
+                # Store predictions and labels
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(target_var.cpu().numpy())
+
+                # Accuracy calculation
+                correct = preds.eq(target_var).sum().item()
+                total_correct += correct
+                total_samples += len(preds)
+
+        # Compute overall metrics
+        accuracy = total_correct / total_samples * 100
+        avg_loss = total_loss / len(dataloader_val)
+
         print(f"Validation Accuracy: {accuracy:.2f}%")
-        return accuracy, all_preds, all_labels
+        print(f"Validation Loss: {avg_loss:.4f}")
+
+        return accuracy, avg_loss, all_preds, all_labels
+
 
     def test(self, dataset_test):
         """Test the model on unseen data."""
@@ -212,3 +289,6 @@ class Rotationnet_Strategy(ClassificationStrategy):
         """Load the model."""
         self.model.load_state_dict(torch.load(path))
         print(f"Model loaded from {path}")
+
+def repeat_to_rgb(x):
+    return x.repeat(3, 1, 1)
