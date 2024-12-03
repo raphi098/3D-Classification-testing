@@ -9,12 +9,13 @@ from torch.utils.data import Dataset
 
 class PointCloudDataset(Dataset):
 
-    def __init__(self, root_dir, process_data=False, split='train'):
+    def __init__(self, root_dir, process_data=False, split='train', use_normals=True):
         self.root = root_dir
         self.process_data = process_data
         self.categories = sorted([name for name in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, name))])
         self.num_categories = len(self.categories)
         self.split = split
+        self.use_normals = use_normals
         
         if not os.path.exists(os.path.join(self.root, "shape_names.txt")):
             with open(os.path.join(self.root, "shape_names.txt"), "w") as f:

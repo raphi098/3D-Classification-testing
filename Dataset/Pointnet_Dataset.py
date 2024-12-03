@@ -15,34 +15,29 @@ def pc_normalize(pc):
     pc = pc / m
     return pc
 
-
 def farthest_point_sample(point, npoint):
-    """
-    Input:
-        xyz: pointcloud data, [N, D]
-        npoint: number of samples
-    Return:
-        centroids: sampled pointcloud index, [npoint, D]
-    """
     N, D = point.shape
-    xyz = point[:,:3]
-    centroids = np.zeros((npoint,))
+    xyz = point[:, :3]  # Extract xyz coordinates
+    sampled_indices = np.zeros((npoint,), dtype=np.int32)
     distance = np.ones((N,)) * 1e10
     farthest = np.random.randint(0, N)
+    
     for i in range(npoint):
-        centroids[i] = farthest
+        sampled_indices[i] = farthest  # Record the index of the farthest point
         centroid = xyz[farthest, :]
         dist = np.sum((xyz - centroid) ** 2, -1)
         mask = dist < distance
         distance[mask] = dist[mask]
         farthest = np.argmax(distance, -1)
-    point = point[centroids.astype(np.int32)]
-    return point
+    
+    sampled_points = point[sampled_indices]  # Gather sampled points using indices
+    return sampled_points, sampled_indices
+
 
 class PointnetDataset(Dataset):
-    def __init__(self, root, args, split='train', process_data=False):
+    def __init__(self, num_points, root, args, split, process_data=False):
         self.root = root
-        self.npoints = args.num_point
+        self.npoints = num_points
         self.process_data = process_data
         self.uniform = args.use_uniform_sample
         self.use_normals = args.use_normals
@@ -57,7 +52,6 @@ class PointnetDataset(Dataset):
 
         self.categories = [line.rstrip() for line in open(self.categories_file)]
         self.classes = dict(zip(self.categories, range(len(self.categories))))
-        print(self.classes)
 
         if not os.path.exists(os.path.join(self.root, "train.txt")):
             file_names = self.get_filenames("train")
@@ -76,7 +70,7 @@ class PointnetDataset(Dataset):
         shape_names = ['_'.join(x.split('_')[0:-1]) for x in shape_ids[split]]
         self.datapath = [(shape_names[i], os.path.join(self.root, shape_names[i], split, shape_ids[split][i])) for i in range(len(shape_ids[split]))]
         print(self.num_category, split, self.npoints)
-        if self.uniform:
+        if self.use_normals:
             self.save_path = os.path.join(self.root, 'custom%d_%s_%dpts_fps.dat' % (self.num_category, split, self.npoints))
         else:
             self.save_path = os.path.join(self.root, 'custom%d_%s_%dpts.dat' % (self.num_category, split, self.npoints))
@@ -91,13 +85,24 @@ class PointnetDataset(Dataset):
                     fn = self.datapath[index]
                     cls = self.classes[self.datapath[index][0]]
                     cls = np.array([cls]).astype(np.int32)
-                    point_set = o3d.io.read_point_cloud(fn[1])
-                    point_set = np.asarray(point_set.points).astype(np.float32)
+                    mesh = o3d.io.read_triangle_mesh(fn[1])
 
-                    if self.uniform:
-                        point_set = farthest_point_sample(point_set, self.npoints)
-                    else:
-                        point_set = point_set[0:self.npoints, :]
+                    point_set = np.asarray(mesh.vertices).astype(np.float32)
+                    print(point_set.shape)
+                    
+                    point_set, sampled_indices = farthest_point_sample(point_set, self.npoints)
+
+                    if self.use_normals:
+                        if not mesh.has_vertex_normals():
+                            mesh.compute_vertex_normals()
+                        vertex_normals = np.asarray(mesh.vertex_normals).astype(np.float32)
+
+                        # Sample the normals corresponding to the sampled points
+                        vertex_normals = vertex_normals[sampled_indices]
+
+                        # Concatenate the points and normals
+                        point_set = np.concatenate((point_set, vertex_normals), axis=1)
+
 
                     self.list_of_points[index] = point_set
                     self.list_of_labels[index] = cls
@@ -128,12 +133,14 @@ class PointnetDataset(Dataset):
             fn = self.datapath[index]
             cls = self.classes[self.datapath[index][0]]
             label = np.array([cls]).astype(np.int32)
-            point_set = o3d.io.read_point_cloud(fn[1])
-            point_set = np.asarray(point_set.points).astype(np.float32)
+            mesh = o3d.io.read_triangle_mesh(fn[1])
 
             if self.uniform:
+                point_set = np.asarray(mesh.vertices).astype(np.float32)
                 point_set = farthest_point_sample(point_set, self.npoints)
             else:
+                point_set = mesh.sample_points_poisson_disk(self.npoints)
+                point_set = np.asarray(point_set.points).astype(np.float32)
                 point_set = point_set[0:self.npoints, :]
                 
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
@@ -149,4 +156,4 @@ if __name__ == "__main__":
     root = os.path.join("data", "pc_dataset_v1")
     from types import SimpleNamespace
     args = SimpleNamespace(num_point=1024, use_uniform_sample=False, use_normals=False, num_category=40)
-    test = PointnetDataset(root, args, "train", process_data=True)
+    test = PointnetDataset(1024, root, args, "train", process_data=True)

@@ -16,33 +16,35 @@ from types import SimpleNamespace
 from Dataset import PointnetDataset
 
 class Pointnet2Strategy(ClassificationStrategy):
-    def __init__(self, num_classes, num_points=1024):
-        self.model = Pointnet2(num_classes=num_classes)
+    def __init__(self, num_classes, num_points=1024, use_normals = True, use_uniform_sample = True, unit_ball = True):
+        self.model = Pointnet2(num_classes=num_classes, normal_channel=use_normals)
         self.criterion = Pointnet2_loss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_points = num_points
         self.output_dir = None
         self.Augmentation = Augmentation()
         self.num_classes = num_classes
+        self.use_normals =  use_normals
+        self.use_uniform_sample = use_uniform_sample
+        self.unit_ball = unit_ball
 
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
-        args = SimpleNamespace(num_point=1024, use_uniform_sample=False, use_normals=False, num_category=9)
+        args = SimpleNamespace(use_uniform_sample=self.use_uniform_sample, use_normals=self.use_normals, num_category=self.num_classes)
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points")
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points_unitball_{self.unit_ball}")
             print(f"Creating Dataset in Path {self.output_dir}")
-            StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
-            dataset_train = PointnetDataset(root=self.output_dir, args=args, process_data=False, split="train")
-            dataset_test = PointnetDataset(root=self.output_dir, args=args, process_data=False, split="test")
+            StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split, unit_ball=self.unit_ball)
+            dataset_train = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points,process_data=True, split="train")
+            dataset_test = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points, process_data=True, split="test")
         else:
             self.output_dir = dataset_path
-            dataset_train = PointnetDataset(root=dataset_path, args=args, process_data=False, split="train")
-            dataset_test = PointnetDataset(root=dataset_path, args=args, process_data=False, split="test")
+            dataset_train = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=False, split="train")
+            dataset_test = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=False, split="test")
 
         return dataset_train, dataset_test  
 
     def train(
-        self, dataset_train, dataset_val, epochs=10, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None
-    ):
+        self, dataset_train, dataset_val, epochs=100, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
         # Init the dataloaders
         dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers,drop_last=True, persistent_workers=persistent_workers)
         dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=False, num_workers=num_workers, persistent_workers=persistent_workers)

@@ -4,11 +4,12 @@ import os
 from tqdm import tqdm
 
 class StlToPointCloud:
-    def __init__(self, dataset_path, number_of_points, train_test_split=0.8):
+    def __init__(self, dataset_path, number_of_points, unit_ball, train_test_split=0.8):
         self.dataset_path = dataset_path
         self.number_of_points = number_of_points
         self.train_test_split = train_test_split
-        self.pc_dataset_path = os.path.join("Data_prepared",f"{os.path.basename(self.dataset_path)}_{number_of_points}_points")
+        self.unit_ball = unit_ball
+        self.pc_dataset_path = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{number_of_points}_points_unitball_{unit_ball}")
         self.folder_names = []
 
         if not os.path.exists("Data_prepared"):
@@ -60,11 +61,30 @@ class StlToPointCloud:
     
     def convert_to_pc(self, file_path, destination_path):
         mesh = o3d.io.read_triangle_mesh(file_path)
-        # Center the mesh
-        vertices = np.asarray(mesh.vertices)
-        centroid = vertices.mean(axis=0)
-        vertices_centered = vertices - centroid
-        mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
+        if self.unit_ball:
+            # Normalize mesh to sphere with radius = 1
+            # Step 1: Translate to zero mean
+            points = np.asarray(mesh.vertices)
+            centroid = points.mean(axis=0)
+            points -= centroid
+
+            # Step 2: Scale to fit within a unit sphere
+            max_distance = np.linalg.norm(points, axis=1).max()
+            points /= max_distance
+
+            # Update mesh with normalized points
+            mesh.vertices = o3d.utility.Vector3dVector(points)
+
+            # Step 3: Compute normals (required for STL format)
+            mesh.compute_triangle_normals()  # Compute face normals
+            mesh.compute_vertex_normals()  # Optional: compute vertex normals
+
+            # Center the mesh
+            vertices = np.asarray(mesh.vertices)
+            centroid = vertices.mean(axis=0)
+            vertices_centered = vertices - centroid
+            mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
+
         pc = mesh.sample_points_poisson_disk(number_of_points=self.number_of_points)
         o3d.io.write_point_cloud(destination_path, pc)
 

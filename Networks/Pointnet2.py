@@ -4,7 +4,7 @@ from utils import PointNetSetAbstraction
 
 
 class Pointnet2(nn.Module):
-    def __init__(self,num_classes,normal_channel=False):
+    def __init__(self,num_classes, normal_channel=False):
         super(Pointnet2, self).__init__()
         #Could be implemented later => use normals
         in_channel = 6 if normal_channel else 3
