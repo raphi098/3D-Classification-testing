@@ -5,6 +5,8 @@ import pickle
 import open3d as o3d
 from tqdm import tqdm
 from torch.utils.data import Dataset
+import multiprocessing as mp
+import torch
 
 warnings.filterwarnings('ignore')
 
@@ -16,23 +18,28 @@ def pc_normalize(pc):
     return pc
 
 def farthest_point_sample(point, npoint):
-    N, D = point.shape
-    xyz = point[:, :3]  # Extract xyz coordinates
-    sampled_indices = np.zeros((npoint,), dtype=np.int32)
-    distance = np.ones((N,)) * 1e10
-    farthest = np.random.randint(0, N)
-    
-    for i in range(npoint):
-        sampled_indices[i] = farthest  # Record the index of the farthest point
-        centroid = xyz[farthest, :]
-        dist = np.sum((xyz - centroid) ** 2, -1)
-        mask = dist < distance
-        distance[mask] = dist[mask]
-        farthest = np.argmax(distance, -1)
-    
-    sampled_points = point[sampled_indices]  # Gather sampled points using indices
-    return sampled_points, sampled_indices
 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Convert to PyTorch tensor and move to device
+    point = torch.tensor(point, device=device, dtype=torch.float32)
+    N, D = point.shape
+    xyz = point[:, :3] 
+
+    sampled_indices = torch.zeros(npoint, dtype=torch.long, device=device)
+    distance = torch.ones(N, device=device) * 1e10 
+    farthest = torch.randint(0, N, (1,), device=device)
+
+    for i in range(npoint):
+        sampled_indices[i] = farthest
+        centroid = xyz[farthest, :].unsqueeze(0)
+        dist = torch.sum((xyz - centroid) ** 2, dim=-1)
+        distance = torch.minimum(distance, dist) 
+
+        farthest = torch.argmax(distance, dim=-1)
+
+    sampled_points = point[sampled_indices] 
+    return sampled_points.cpu().numpy(), sampled_indices.cpu().numpy()
 
 class PointnetDataset(Dataset):
     def __init__(self, num_points, root, args, split, process_data=False):
@@ -69,7 +76,7 @@ class PointnetDataset(Dataset):
 
         shape_names = ['_'.join(x.split('_')[0:-1]) for x in shape_ids[split]]
         self.datapath = [(shape_names[i], os.path.join(self.root, shape_names[i], split, shape_ids[split][i])) for i in range(len(shape_ids[split]))]
-        print(self.num_category, split, self.npoints)
+
         if self.use_normals:
             self.save_path = os.path.join(self.root, 'custom%d_%s_%dpts_fps.dat' % (self.num_category, split, self.npoints))
         else:
@@ -88,8 +95,6 @@ class PointnetDataset(Dataset):
                     mesh = o3d.io.read_triangle_mesh(fn[1])
 
                     point_set = np.asarray(mesh.vertices).astype(np.float32)
-                    print(point_set.shape)
-                    
                     point_set, sampled_indices = farthest_point_sample(point_set, self.npoints)
 
                     if self.use_normals:

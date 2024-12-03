@@ -2,94 +2,96 @@ import open3d as o3d
 import numpy as np
 import os
 from tqdm import tqdm
+from multiprocessing import Pool, cpu_count
+
 
 class StlToPointCloud:
-    def __init__(self, dataset_path, number_of_points, unit_ball, train_test_split=0.8):
+    def __init__(self, dataset_path, unit_ball, output_dir, train_test_split=0.8):
         self.dataset_path = dataset_path
-        self.number_of_points = number_of_points
         self.train_test_split = train_test_split
         self.unit_ball = unit_ball
-        self.pc_dataset_path = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{number_of_points}_points_unitball_{unit_ball}")
+        self.output_dir = output_dir
         self.folder_names = []
 
         if not os.path.exists("Data_prepared"):
             os.makedirs("Data_prepared")
-        if not os.path.exists(self.pc_dataset_path):
-            print(f"Creating folder {self.pc_dataset_path}")
-            self.folder_names = [folder for folder in os.listdir(self.dataset_path) if os.path.isdir(os.path.join(self.dataset_path, folder))]
-            print(self.folder_names)
-            os.makedirs(self.pc_dataset_path)
-            self.create_train_test_folders() 
-            self.convert_dataset_to_pc()
-        else:
-            print(f"Folder {self.pc_dataset_path} already exists")
-    
+
+        print(f"Creating folder {self.output_dir}")
+        self.folder_names = [folder for folder in os.listdir(self.dataset_path) if os.path.isdir(os.path.join(self.dataset_path, folder))]
+        print(self.folder_names)
+        os.makedirs(self.output_dir)
+        self.create_train_test_folders()
+        self.process_dataset()
+
     def create_train_test_folders(self):
         for folder_name in self.folder_names:
-            #Replace spaces in folder names with underscores
             folder_name = folder_name.replace(" ", "_")
-            if not os.path.exists(os.path.join(self.pc_dataset_path, folder_name)):
-                os.makedirs(os.path.join(self.pc_dataset_path, folder_name))
+            if not os.path.exists(os.path.join(self.output_dir, folder_name)):
+                os.makedirs(os.path.join(self.output_dir, folder_name))
                 print(f"Created folder {folder_name}")
-            if not os.path.exists(os.path.join(self.pc_dataset_path, folder_name, "train")):
-                os.makedirs(os.path.join(self.pc_dataset_path, folder_name, "train"))
+            if not os.path.exists(os.path.join(self.output_dir, folder_name, "train")):
+                os.makedirs(os.path.join(self.output_dir, folder_name, "train"))
                 print(f"Created folder {folder_name}/train")
-            if not os.path.exists(os.path.join(self.pc_dataset_path, folder_name, "test")):
-                os.makedirs(os.path.join(self.pc_dataset_path, folder_name, "test"))
+            if not os.path.exists(os.path.join(self.output_dir, folder_name, "test")):
+                os.makedirs(os.path.join(self.output_dir, folder_name, "test"))
                 print(f"Created folder {folder_name}/test")
 
-    def convert_dataset_to_pc(self):
-        for folder in tqdm(self.folder_names, desc="Processing folders"):
-            folder_path = os.path.join(self.dataset_path, folder)
+    def process_dataset(self):
+        # Create a single Pool to reuse workers
+        with Pool() as pool:
+            for folder in tqdm(self.folder_names, desc="Processing folders"):
+                folder_path = os.path.join(self.dataset_path, folder)
 
-            # Count files for splitting the dataset
-            count_files = len(os.listdir(os.path.join(self.dataset_path, folder)))
-            split_index = int(count_files * self.train_test_split)
-            train_files = os.listdir(os.path.join(self.dataset_path, folder))[:split_index]
-            test_files = os.listdir(os.path.join(self.dataset_path, folder))[split_index:]
+                count_files = len(os.listdir(os.path.join(self.dataset_path, folder)))
+                split_index = int(count_files * self.train_test_split)
+                train_files = os.listdir(os.path.join(self.dataset_path, folder))[:split_index]
+                test_files = os.listdir(os.path.join(self.dataset_path, folder))[split_index:]
 
-            for split in ["train", "test"]:
-                if split == "train":
-                    files = train_files
-                else:
-                    files = test_files
+                for split in ["train", "test"]:
+                    files = train_files if split == "train" else test_files
+                    file_paths = [(os.path.join(folder_path, file),
+                                os.path.join(self.output_dir, folder.replace(" ", "_"), split, file.replace(" ", "_")),
+                                os.path.join(self.output_dir, folder.replace(" ", "_"), split, file.replace(" ", "_")))
+                                for file in files]
 
-                for file in tqdm(files, desc=f"Processing files in {split}", leave=False):
-                    file_path = os.path.join(folder_path, file)
-                    destination_path = os.path.join(self.pc_dataset_path, folder.replace(" ", "_"), split, file.replace(".stl", ".pcd").replace(" ", "_"))
-                    self.convert_to_pc(file_path, destination_path)
-    
-    def convert_to_pc(self, file_path, destination_path):
+                    # Use the persistent Pool instance
+                    list(tqdm(pool.imap(self.process_mesh_wrapper, file_paths),
+                            total=len(file_paths), desc=f"Processing files in {split}", leave=False))
+
+
+
+    @staticmethod
+    def process_mesh_wrapper(args):
+        file_path, destination_path_mesh, destination_path_pc = args
+        StlToPointCloud.process_mesh(file_path, destination_path_mesh, destination_path_pc)
+
+    @staticmethod
+    def process_mesh(file_path, destination_path_mesh, destination_path_pc):
         mesh = o3d.io.read_triangle_mesh(file_path)
-        if self.unit_ball:
-            # Normalize mesh to sphere with radius = 1
-            # Step 1: Translate to zero mean
-            points = np.asarray(mesh.vertices)
-            centroid = points.mean(axis=0)
-            points -= centroid
+        if mesh.is_empty():
+            print(f"Empty mesh: {file_path}")
+            return
 
-            # Step 2: Scale to fit within a unit sphere
-            max_distance = np.linalg.norm(points, axis=1).max()
-            points /= max_distance
+        points = np.asarray(mesh.vertices)
+        centroid = points.mean(axis=0)
+        points -= centroid
+        max_distance = np.linalg.norm(points, axis=1).max()
+        points /= max_distance
+        mesh.vertices = o3d.utility.Vector3dVector(points)
+        mesh.compute_triangle_normals()
+        mesh.compute_vertex_normals()
 
-            # Update mesh with normalized points
-            mesh.vertices = o3d.utility.Vector3dVector(points)
+        vertices = np.asarray(mesh.vertices)
+        centroid = vertices.mean(axis=0)
+        vertices_centered = vertices - centroid
+        mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
 
-            # Step 3: Compute normals (required for STL format)
-            mesh.compute_triangle_normals()  # Compute face normals
-            mesh.compute_vertex_normals()  # Optional: compute vertex normals
-
-            # Center the mesh
-            vertices = np.asarray(mesh.vertices)
-            centroid = vertices.mean(axis=0)
-            vertices_centered = vertices - centroid
-            mesh.vertices = o3d.utility.Vector3dVector(vertices_centered)
-
-        pc = mesh.sample_points_poisson_disk(number_of_points=self.number_of_points)
-        o3d.io.write_point_cloud(destination_path, pc)
+        # Save the processed mesh as STL
+        o3d.io.write_triangle_mesh(destination_path_mesh, mesh)
 
 
 if __name__ == "__main__":
-    dataset_path = os.path.join(os.getcwd(), "Data_raw", "test_dataset" )
-    number_of_points = 1024
-    stl_to_pc = StlToPointCloud(dataset_path, number_of_points)
+    dataset_path = os.path.join(os.getcwd(), "Data_raw", "test_dataset")
+    unit_ball = True
+    output_dir = os.path.join(os.getcwd(), "Data_prepared")
+    stl_to_pc = StlToPointCloud(dataset_path, unit_ball, output_dir)

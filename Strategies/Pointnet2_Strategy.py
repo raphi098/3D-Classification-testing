@@ -31,9 +31,10 @@ class Pointnet2Strategy(ClassificationStrategy):
     def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
         args = SimpleNamespace(use_uniform_sample=self.use_uniform_sample, use_normals=self.use_normals, num_category=self.num_classes)
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_{self.num_points}_points_unitball_{self.unit_ball}")
-            print(f"Creating Dataset in Path {self.output_dir}")
-            StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split, unit_ball=self.unit_ball)
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_unitball_{self.unit_ball}_points_{self.num_points}")
+            if not os.path.exists(self.output_dir):
+                print(f"Creating Dataset in Path {self.output_dir}")
+                StlToPointCloud(dataset_path=dataset_path, train_test_split=train_test_split, unit_ball=self.unit_ball, output_dir=self.output_dir)
             dataset_train = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points,process_data=True, split="train")
             dataset_test = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points, process_data=True, split="test")
         else:
@@ -73,6 +74,7 @@ class Pointnet2Strategy(ClassificationStrategy):
         )
 
         best_accuracy = 0
+        count = 0
         for epoch in range(epochs):
             print(f"Epoch {epoch+1}/{epochs}:")
             mean_correct = []
@@ -86,6 +88,9 @@ class Pointnet2Strategy(ClassificationStrategy):
                 points[:, :, 0:3] = self.Augmentation.shift_point_cloud(points[:, :, 0:3])
                 points = torch.Tensor(points)
                 points = points.transpose(2, 1)
+                if count == 0:
+                    print(points.shape)
+                    count += 1
                 points, target = points.cuda(), target.cuda()
 
                 pred, trans_feat = self.model(points)
