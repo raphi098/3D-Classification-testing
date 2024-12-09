@@ -18,7 +18,6 @@ def pc_normalize(pc):
     return pc
 
 def farthest_point_sample(point, npoint):
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Convert to PyTorch tensor and move to device
@@ -147,7 +146,7 @@ class PointnetDataset(Dataset):
                 point_set = mesh.sample_points_poisson_disk(self.npoints)
                 point_set = np.asarray(point_set.points).astype(np.float32)
                 point_set = point_set[0:self.npoints, :]
-                
+
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
         if not self.use_normals:
             point_set = point_set[:, 0:3]

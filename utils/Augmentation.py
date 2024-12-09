@@ -86,6 +86,86 @@ class Augmentation:
             shape_pc = batch_data[k, ...]
             rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
         return rotated_data
+    
+    def rotate_whole_point_cloud_z(self,batch_data):
+        """
+        Randomly rotate the entire batch of point clouds about the Z-axis
+        by the same random angle (0 to 360 degrees).
+        
+        Input:
+            batch_data: BxNx3 array, original batch of point clouds
+        Output:
+            rotated_data: BxNx3 array, rotated batch of point clouds
+        """
+        # Generate a single random rotation angle for the whole batch
+        rotation_angle = np.random.uniform(0, 2 * np.pi)  # Random angle in radians
+
+        # Compute the rotation matrix for the Z-axis
+        cosval = np.cos(rotation_angle)
+        sinval = np.sin(rotation_angle)
+        rotation_matrix = np.array([
+            [cosval, sinval, 0],
+            [-sinval, cosval, 0],
+            [0, 0, 1]
+        ])  # Shape: (3, 3)
+
+        # Apply the same rotation to the entire batch
+        rotated_data = np.einsum('ij,bnj->bni', rotation_matrix, batch_data)
+
+        return rotated_data
+    
+    def rotate_whole_point_cloud_x(self, batch_data):
+        """
+        Rotates the entire batch of point clouds about the X-axis by a random angle (0 to 360 degrees).
+        
+        Input:
+            batch_data: BxNx3 array, original batch of point clouds
+        Output:
+            rotated_data: BxNx3 array, rotated batch of point clouds
+        """
+        # Generate a single random rotation angle for the whole batch
+        rotation_angle = np.random.uniform(0, 2 * np.pi)  # Random angle in radians
+
+        # Compute the rotation matrix for the X-axis
+        cosval = np.cos(rotation_angle)
+        sinval = np.sin(rotation_angle)
+        rotation_matrix = np.array([
+            [1, 0, 0],
+            [0, cosval, sinval],
+            [0, -sinval, cosval]
+        ])  # Shape: (3, 3)
+
+        # Apply the same rotation to the entire batch
+        rotated_data = np.einsum('ij,bnj->bni', rotation_matrix, batch_data)
+
+        return rotated_data
+    
+    def rotate_whole_point_cloud_y(self, batch_data):
+        """
+        Rotates the entire batch of point clouds about the Y-axis by a random angle (0 to 360 degrees).
+        
+        Input:
+            batch_data: BxNx3 array, original batch of point clouds
+        Output:
+            rotated_data: BxNx3 array, rotated batch of point clouds
+        """
+        # Generate a single random rotation angle for the whole batch
+        rotation_angle = np.random.uniform(0, 2 * np.pi)  # Random angle in radians
+
+        # Compute the rotation matrix for the Y-axis
+        cosval = np.cos(rotation_angle)
+        sinval = np.sin(rotation_angle)
+        rotation_matrix = np.array([
+            [cosval, 0, -sinval],
+            [0, 1, 0],
+            [sinval, 0, cosval]
+        ])  # Shape: (3, 3)
+
+        # Apply the same rotation to the entire batch
+        rotated_data = np.einsum('ij,bnj->bni', rotation_matrix, batch_data)
+
+        return rotated_data
+
 
     def rotate_point_cloud_with_normal(self, batch_xyz_normal):
         ''' Randomly rotate XYZ, normal point cloud.

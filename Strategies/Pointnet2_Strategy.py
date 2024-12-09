@@ -3,8 +3,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 from tqdm import tqdm
 from Strategies.Classification_Strategy import ClassificationStrategy
-from Networks import Pointnet2, Pointnet2_loss
-from Dataset import StlToPointCloud, PointCloudDataset
+from Networks import Pointnet2_ssg_loss, Pointnet2_ssg, Pointnet2_msg, Pointnet2_msg_loss
+from Dataset import StlToPointCloud
 import os
 from torch.utils.data import DataLoader
 from utils import WandbLogger, Augmentation
@@ -16,9 +16,9 @@ from types import SimpleNamespace
 from Dataset import PointnetDataset
 
 class Pointnet2Strategy(ClassificationStrategy):
-    def __init__(self, num_classes, num_points=1024, use_normals = True, use_uniform_sample = True, unit_ball = True):
-        self.model = Pointnet2(num_classes=num_classes, normal_channel=use_normals)
-        self.criterion = Pointnet2_loss()
+    def __init__(self, num_classes, strategy = "msg", num_points=1024, use_normals = True, use_uniform_sample = True, unit_ball = True):
+        self.model = Pointnet2_msg(num_classes=num_classes, normal_channel=use_normals) if strategy =="msg" else Pointnet2_ssg(num_classes=num_classes, normal_channel=use_normals)
+        self.criterion = Pointnet2_msg_loss() if strategy == "msg" else Pointnet2_ssg_loss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_points = num_points
         self.output_dir = None
@@ -39,8 +39,8 @@ class Pointnet2Strategy(ClassificationStrategy):
             dataset_test = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points, process_data=True, split="test")
         else:
             self.output_dir = dataset_path
-            dataset_train = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=False, split="train")
-            dataset_test = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=False, split="test")
+            dataset_train = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=True, split="train")
+            dataset_test = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=True, split="test")
 
         return dataset_train, dataset_test  
 
@@ -53,7 +53,7 @@ class Pointnet2Strategy(ClassificationStrategy):
         self.model.apply(inplace_relu)
         self.model.to(self.device)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.0001)
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-05, weight_decay=0.0001)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
 
         self.save_path = os.path.join("results", f"Pointnet2_{os.path.basename(self.output_dir)}")
@@ -85,7 +85,7 @@ class Pointnet2Strategy(ClassificationStrategy):
                 points = points.data.numpy()
                 points = self.Augmentation.random_point_dropout(points)
                 points[:, :, 0:3] = self.Augmentation.random_scale_point_cloud(points[:, :, 0:3])
-                points[:, :, 0:3] = self.Augmentation.shift_point_cloud(points[:, :, 0:3])
+                points[:, :, 0:3] = self.Augmentation.jitter_point_cloud(points[:, :, 0:3])
                 points = torch.Tensor(points)
                 points = points.transpose(2, 1)
                 if count == 0:
@@ -94,7 +94,10 @@ class Pointnet2Strategy(ClassificationStrategy):
                 points, target = points.cuda(), target.cuda()
 
                 pred, trans_feat = self.model(points)
-                loss = self.criterion(pred, target.long())
+                if type(self.criterion) == Pointnet2_msg_loss:
+                    loss = self.criterion(pred, target.long(), trans_feat)
+                else:
+                    loss = self.criterion(pred, target.long())
                 pred_choice = pred.data.max(1)[1]
 
                 correct = pred_choice.eq(target.long().data).cpu().sum()
@@ -168,8 +171,12 @@ class Pointnet2Strategy(ClassificationStrategy):
                 batch_data = batch_data.transpose(2, 1)
 
                 # Forward pass
-                pred, _ = self.model(batch_data)
-                loss = self.criterion(pred, batch_labels)
+                pred, trans_feat = self.model(batch_data)
+                if type(self.criterion) == Pointnet2_msg_loss:
+                    loss = self.criterion(pred, batch_labels, trans_feat)
+                else:
+                    loss = self.criterion(pred, batch_labels)
+                                          
                 total_loss += loss.item()
 
                 # Get predictions
@@ -197,9 +204,13 @@ class Pointnet2Strategy(ClassificationStrategy):
         print(f"Model saved to {path}")
 
     def load(self, path):
-        self.model.load_state_dict(torch.load(path, weights_only=False))
-        print(f"Model loaded from {path}")
+        # Load the model weights
+        self.model.load_state_dict(torch.load(path, map_location=self.device))  # Ensure weights are loaded on the right device
 
+        # Move the model to the specified device
+        self.model.to(self.device)
+        print(f"Model loaded from {path}")
+  
 def inplace_relu(m):
     classname = m.__class__.__name__
     if classname.find('ReLU') != -1:
