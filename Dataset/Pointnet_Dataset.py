@@ -45,7 +45,7 @@ class PointnetDataset(Dataset):
         self.root = root
         self.npoints = num_points
         self.process_data = process_data
-        self.uniform = args.use_uniform_sample
+        self.sampling_strategy = args.sampling_strategy
         self.use_normals = args.use_normals
         self.num_category = args.num_category
 
@@ -139,13 +139,15 @@ class PointnetDataset(Dataset):
             label = np.array([cls]).astype(np.int32)
             mesh = o3d.io.read_triangle_mesh(fn[1])
 
-            if self.uniform:
+            if self.sampling_strategy == "fps":
                 point_set = np.asarray(mesh.vertices).astype(np.float32)
-                point_set = farthest_point_sample(point_set, self.npoints)
-            else:
+                point_set, _ = farthest_point_sample(point_set, self.npoints)
+            elif self.sampling_strategy =="poisson":
                 point_set = mesh.sample_points_poisson_disk(self.npoints)
                 point_set = np.asarray(point_set.points).astype(np.float32)
-                point_set = point_set[0:self.npoints, :]
+            else:
+                point_set = mesh.sample_points_uniformly(self.npoints)
+                point_set = np.asarray(point_set.points).astype(np.float32)
 
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
         if not self.use_normals:

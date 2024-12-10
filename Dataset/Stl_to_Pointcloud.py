@@ -2,8 +2,7 @@ import open3d as o3d
 import numpy as np
 import os
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
-
+from multiprocessing import Pool
 
 class StlToPointCloud:
     def __init__(self, path_data, output_dir, train_test_split=0.8):

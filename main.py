@@ -11,8 +11,8 @@ if __name__ == "__main__":
     workflow = AIWorkflow(strategy)
     dataset_train, dataset_test = workflow.prepare_data(path_data, data_raw=True)
 
-    # workflow.run_training(dataset_train, dataset_test, epochs=150, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", 
-    #                       wandb_run_name="all_1024")
+    workflow.run_training(dataset_train, dataset_test, epochs=150, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", 
+                          wandb_run_name="function_testing")
 
 
     # Testing

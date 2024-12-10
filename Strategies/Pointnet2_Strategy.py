@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from Dataset import PointnetDataset
 
 class Pointnet2Strategy(ClassificationStrategy):
-    def __init__(self, num_classes, strategy = "msg", num_points=1024, use_normals = True, use_uniform_sample = True):
+    def __init__(self, num_classes, strategy = "msg", num_points=1024, use_normals = True, sampling_strategy = "fps"):
         self.model = Pointnet2_msg(num_classes=num_classes, normal_channel=use_normals) if strategy =="msg" else Pointnet2_ssg(num_classes=num_classes, normal_channel=use_normals)
         self.criterion = Pointnet2_msg_loss() if strategy == "msg" else Pointnet2_ssg_loss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -25,12 +25,12 @@ class Pointnet2Strategy(ClassificationStrategy):
         self.Augmentation = Augmentation()
         self.num_classes = num_classes
         self.use_normals =  use_normals
-        self.use_uniform_sample = use_uniform_sample
+        self.sampling_strategy = sampling_strategy
 
     def prepare_data(self, path_data, data_raw=True, train_test_split=0.8):
-        args = SimpleNamespace(use_uniform_sample=self.use_uniform_sample, use_normals=self.use_normals, num_category=self.num_classes)
+        args = SimpleNamespace(sampling_strategy=self.sampling_strategy, use_normals=self.use_normals, num_category=self.num_classes)
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(path_data)}_points_{self.num_points}")
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(path_data)}_points_{self.num_points}_{self.sampling_strategy}_sampling")
             if not os.path.exists(self.output_dir):
                 print(f"Creating Dataset in Path {self.output_dir}")
                 StlToPointCloud(path_data=path_data, train_test_split=train_test_split, output_dir=self.output_dir)
