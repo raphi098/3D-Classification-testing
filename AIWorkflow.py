@@ -8,7 +8,7 @@ class AIWorkflow:
         """
         self.strategy = strategy
 
-    def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
+    def prepare_data(self, path_data, data_raw=True, train_test_split=0.8):
         """
         Prepare the dataset using the selected strategy.
 
@@ -23,7 +23,7 @@ class AIWorkflow:
         """
         print(f"Preparing data using strategy {self.strategy.__class__.__name__}")
 
-        return self.strategy.prepare_data(dataset_path, data_raw, train_test_split)
+        return self.strategy.prepare_data(path_data, data_raw, train_test_split)
 
     def run_training(self, dataset_train, dataset_val, epochs=100, lr=0.001, batch_size=24, num_workers=8, persistent_workers=True, wandb_project_name="3d_classification", wandb_run_name=None):
         """

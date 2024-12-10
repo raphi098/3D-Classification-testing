@@ -1,11 +1,9 @@
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
 from tqdm import tqdm
 from Strategies.Classification_Strategy import ClassificationStrategy
 from Networks import SACNN
-from Dataset import StlToPointCloud
-from Dataset import PointCloudDataset
+from Dataset import StlToPointCloud, Pointnet_Dataset
 import os
 from torch.utils.data import DataLoader
 from utils import WandbLogger
@@ -28,12 +26,12 @@ class SACNNStrategy(ClassificationStrategy):
             self.output_dir = os.path.join("Data_prepared",f"{os.path.basename(dataset_path)}_{self.num_points}_points")
             print(f"Creating Dataset in Path {self.output_dir}")
             StlToPointCloud(dataset_path=dataset_path, number_of_points=self.num_points, train_test_split=train_test_split)
-            dataset_train = PointCloudDataset(root_dir=self.output_dir, process_data=True, split="train")
-            dataset_test = PointCloudDataset(root_dir=self.output_dir, process_data=False, split="test")
+            dataset_train = Pointnet_Dataset(root_dir=self.output_dir, process_data=True, split="train")
+            dataset_test = Pointnet_Dataset(root_dir=self.output_dir, process_data=False, split="test")
         else:
             self.output_dir = dataset_path
-            dataset_train = PointCloudDataset(root_dir=dataset_path, process_data=False, split="train")
-            dataset_test = PointCloudDataset(root_dir=dataset_path, process_data=False, split="test")
+            dataset_train = Pointnet_Dataset(root_dir=dataset_path, process_data=False, split="train")
+            dataset_test = Pointnet_Dataset(root_dir=dataset_path, process_data=False, split="test")
 
         return dataset_train, dataset_test  
 

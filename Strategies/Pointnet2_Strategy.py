@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from Dataset import PointnetDataset
 
 class Pointnet2Strategy(ClassificationStrategy):
-    def __init__(self, num_classes, strategy = "msg", num_points=1024, use_normals = True, use_uniform_sample = True, unit_ball = True):
+    def __init__(self, num_classes, strategy = "msg", num_points=1024, use_normals = True, use_uniform_sample = True):
         self.model = Pointnet2_msg(num_classes=num_classes, normal_channel=use_normals) if strategy =="msg" else Pointnet2_ssg(num_classes=num_classes, normal_channel=use_normals)
         self.criterion = Pointnet2_msg_loss() if strategy == "msg" else Pointnet2_ssg_loss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,21 +26,20 @@ class Pointnet2Strategy(ClassificationStrategy):
         self.num_classes = num_classes
         self.use_normals =  use_normals
         self.use_uniform_sample = use_uniform_sample
-        self.unit_ball = unit_ball
 
-    def prepare_data(self, dataset_path, data_raw=True, train_test_split=0.8):
+    def prepare_data(self, path_data, data_raw=True, train_test_split=0.8):
         args = SimpleNamespace(use_uniform_sample=self.use_uniform_sample, use_normals=self.use_normals, num_category=self.num_classes)
         if data_raw:
-            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(dataset_path)}_unitball_{self.unit_ball}_points_{self.num_points}")
+            self.output_dir = os.path.join("Data_prepared", f"{os.path.basename(path_data)}_points_{self.num_points}")
             if not os.path.exists(self.output_dir):
                 print(f"Creating Dataset in Path {self.output_dir}")
-                StlToPointCloud(dataset_path=dataset_path, train_test_split=train_test_split, unit_ball=self.unit_ball, output_dir=self.output_dir)
+                StlToPointCloud(path_data=path_data, train_test_split=train_test_split, output_dir=self.output_dir)
             dataset_train = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points,process_data=True, split="train")
-            dataset_test = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points, process_data=True, split="test")
+            dataset_test = PointnetDataset(root=self.output_dir, args=args, num_points=self.num_points, process_data=False, split="test")
         else:
-            self.output_dir = dataset_path
-            dataset_train = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=True, split="train")
-            dataset_test = PointnetDataset(root=dataset_path, args=args,num_points=self.num_points, process_data=True, split="test")
+            self.output_dir = path_data
+            dataset_train = PointnetDataset(root=path_data, args=args,num_points=self.num_points, process_data=True, split="train")
+            dataset_test = PointnetDataset(root=path_data, args=args,num_points=self.num_points, process_data=True, split="test")
 
         return dataset_train, dataset_test  
 
